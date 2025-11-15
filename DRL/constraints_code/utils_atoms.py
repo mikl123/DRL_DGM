@@ -1,6 +1,6 @@
 from typing import List
 import numpy as np
-from constraints_code.classes import Atom
+from DRL.constraints_code.classes import Atom
 
 
 def collapse_atoms(atom_list):

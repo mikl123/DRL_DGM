@@ -1,7 +1,7 @@
 import json
 import random
 from typing import List
-from constraints_code.classes import Variable
+from DRL.constraints_code.classes import Variable
 
 random.seed(0)
 

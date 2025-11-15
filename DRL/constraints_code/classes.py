@@ -1,9 +1,9 @@
 from typing import List
 import torch
 
-from constraints_code.utils_functions import eval_atoms_list
+from DRL.constraints_code.utils_functions import eval_atoms_list
 
-TOLERANCE=1e-2
+TOLERANCE=1e-6
 
 class Variable():
     def __init__(self, variable: str):
@@ -340,4 +340,12 @@ class Constraint():
 
     def get_ineq_with_pos_and_neg_var_y_and_complement(self, x: Variable):
         return self.disjunctive_inequality.get_ineq_with_pos_and_neg_var_y_and_complement(x)
+
+    def __hash__(self) -> int:
+        return hash(frozenset([i.readable() for i in self.list_inequalities]))
+    
+    def __eq__(self, other):
+        if not isinstance(other, Constraint):
+            return False
+        return set([i.readable()for i in self.list_inequalities]) == set([i.readable()for i in other.list_inequalities])
 

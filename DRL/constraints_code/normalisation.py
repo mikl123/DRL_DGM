@@ -2,8 +2,8 @@ import random
 from typing import List
 import torch
 
-from constraints_code.classes import Variable, Constraint, Inequality
-from constraints_code.utils_atoms import collapse_atoms, multiply_coefficients_of_atoms, negate_atoms
+from DRL.constraints_code.classes import Variable, Constraint, Inequality
+from DRL.constraints_code.utils_atoms import collapse_atoms, multiply_coefficients_of_atoms, negate_atoms
 
 TOLERANCE=1e-2
 

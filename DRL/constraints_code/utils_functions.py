@@ -3,10 +3,10 @@ from typing import List
 import pandas as pd
 import torch
 
-import constraints_code.classes as classes
+import DRL.constraints_code.classes as classes
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from constraints_code.classes import Atom, Variable, Constraint, DisjunctInequality
+    from DRL.constraints_code.classes import Atom, Variable, Constraint, DisjunctInequality
 
 TOLERANCE=1e-2
 

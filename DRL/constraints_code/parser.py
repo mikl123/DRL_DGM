@@ -1,6 +1,6 @@
 from typing import List
 
-from constraints_code.classes import Variable, Atom, Inequality, Constraint
+from DRL.constraints_code.classes import Variable, Atom, Inequality, Constraint
 
 ALLOWED_BOOL_OPS = ['or', 'neg']
 ALLOWED_OPS = ['+', '-', '*', '/']

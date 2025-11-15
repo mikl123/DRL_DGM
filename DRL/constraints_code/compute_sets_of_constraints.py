@@ -1,10 +1,10 @@
 from typing import List, Tuple
 
-from constraints_code.classes import Variable, Constraint, Inequality
-from constraints_code.normalisation import normalise
-from constraints_code.parser import parse_constraints_file
-from constraints_code.utils_functions import split_constr_atoms
-from constraints_code.utils_atoms import collapse_atoms, multiply_coefficients_of_atoms
+from DRL.constraints_code.classes import Variable, Constraint, Inequality
+from DRL.constraints_code.normalisation import normalise
+from DRL.constraints_code.parser import parse_constraints_file
+from DRL.constraints_code.utils_functions import split_constr_atoms
+from DRL.constraints_code.utils_atoms import collapse_atoms, multiply_coefficients_of_atoms
 
 
 def get_pos_pos_x_constr(y: Variable, pos_constr: List[Constraint], pos_neg_constr: List[Constraint]):
@@ -37,6 +37,7 @@ def get_pos_pos_x_constr(y: Variable, pos_constr: List[Constraint], pos_neg_cons
 
 
 def create_constr_by_reduction(y: Variable, constraints_with_y: List[Constraint]):
+    
     red_constr = []
     # separate the constraints in two sets by the sign of y (pos or neg)
     pos_constr, neg_constr, pos_neg_constr = get_pos_neg_pn_x_constr(y, constraints_with_y)
@@ -61,9 +62,28 @@ def create_constr_by_reduction(y: Variable, constraints_with_y: List[Constraint]
                     new_list_of_ineqs = []
             else:
                 new_list_of_ineqs = [new_inequality]
+                
             new_list_of_ineqs.extend(list_ineqs_from_p_without_y)
             new_list_of_ineqs.extend(list_ineqs_from_q_without_y)
-            red_constr.append(Constraint(new_list_of_ineqs))
+            
+            list_variables = {}
+            smaller_subset = []
+            continue_flag = False
+            for constraint in new_list_of_ineqs:
+                sign = constraint.body[0].positive_sign
+                variable = constraint.body[0].variable.variable
+                if variable not in list_variables.keys():           
+                    list_variables[variable] = sign
+                    smaller_subset.append(constraint)
+                else:
+                    if list_variables[variable] != sign:
+                        continue_flag = True
+                        break
+                    else:
+                        continue
+            if not continue_flag:
+                red_constr.append(Constraint(smaller_subset))
+
 
     return red_constr
 

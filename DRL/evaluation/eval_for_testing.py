@@ -3,7 +3,7 @@ import wandb
 import pandas as pd
 import numpy as np
 
-from constraints_code.parser import parse_constraints_file
+from DRL.constraints_code.parser import parse_constraints_file
 
 def constraints_sat_check(args, real_data, generated_data, log_wandb):
     # Note: the ordering of the labels does not matter here
