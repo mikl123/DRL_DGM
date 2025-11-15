@@ -1,2 +1,4 @@
 constraints_generated
 data_generated
+__pycache__
+data

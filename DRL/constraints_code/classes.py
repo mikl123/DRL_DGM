@@ -347,5 +347,5 @@ class Constraint():
     def __eq__(self, other):
         if not isinstance(other, Constraint):
             return False
-        return set([i.readable()for i in self.list_inequalities]) == set([i.readable()for i in other.list_inequalities])
+        return self.__hash__() == other.__hash__()
 

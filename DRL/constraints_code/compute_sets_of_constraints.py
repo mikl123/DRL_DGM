@@ -5,7 +5,7 @@ from DRL.constraints_code.normalisation import normalise
 from DRL.constraints_code.parser import parse_constraints_file
 from DRL.constraints_code.utils_functions import split_constr_atoms
 from DRL.constraints_code.utils_atoms import collapse_atoms, multiply_coefficients_of_atoms
-
+from tqdm import tqdm
 
 def get_pos_pos_x_constr(y: Variable, pos_constr: List[Constraint], pos_neg_constr: List[Constraint]):
     pos_pos_constr: List[Constraint] = []
@@ -29,7 +29,23 @@ def get_pos_pos_x_constr(y: Variable, pos_constr: List[Constraint], pos_neg_cons
             new_list_of_ineqs.extend([ineq_from_q_with_pos_y])
             new_list_of_ineqs.extend(list_ineqs_from_p_without_y)
             new_list_of_ineqs.extend(list_ineqs_from_q_without_y)
-            pos_pos_constr.append(Constraint(new_list_of_ineqs))
+            
+            list_variables = {}
+            smaller_subset = []
+            for constraint in new_list_of_ineqs:
+                sign = constraint.body[0].positive_sign
+                variable = constraint.body[0].variable.variable
+                if variable not in list_variables.keys():           
+                    list_variables[variable] = [sign]
+                    smaller_subset.append(constraint)
+                else:
+                    if sign in list_variables[variable]:
+                        continue
+                    else:
+                        list_variables[variable].append(sign)
+                        smaller_subset.append(constraint)
+            
+            pos_pos_constr.append(Constraint(smaller_subset))
 
     # finally, extend pos_pos_constr with pos_constr
     pos_pos_constr.extend(pos_constr)
@@ -43,10 +59,10 @@ def create_constr_by_reduction(y: Variable, constraints_with_y: List[Constraint]
     pos_constr, neg_constr, pos_neg_constr = get_pos_neg_pn_x_constr(y, constraints_with_y)
 
     pos_pos_constr = get_pos_pos_x_constr(y, pos_constr, pos_neg_constr)
-
+    pos_pos_constr = list(set(pos_pos_constr))
     # then obtain new constr by reduction on y from pairs of constr (p,q)
     # where p is from pos_constr and q is from neg_constr
-    for p in pos_pos_constr:
+    for p in tqdm(pos_pos_constr):
         p: Constraint
         ineq_from_p_with_y, list_ineqs_from_p_without_y = p.get_ineq_with_var_y_and_complement(y)
         for q in neg_constr:
@@ -68,21 +84,20 @@ def create_constr_by_reduction(y: Variable, constraints_with_y: List[Constraint]
             
             list_variables = {}
             smaller_subset = []
-            continue_flag = False
             for constraint in new_list_of_ineqs:
                 sign = constraint.body[0].positive_sign
                 variable = constraint.body[0].variable.variable
                 if variable not in list_variables.keys():           
-                    list_variables[variable] = sign
+                    list_variables[variable] = [sign]
                     smaller_subset.append(constraint)
                 else:
-                    if list_variables[variable] != sign:
-                        continue_flag = True
-                        break
-                    else:
+                    if sign in list_variables[variable]:
                         continue
-            if not continue_flag:
-                red_constr.append(Constraint(smaller_subset))
+                    else:
+                        list_variables[variable].append(sign)
+                        smaller_subset.append(constraint)
+                        
+            red_constr.append(Constraint(smaller_subset))
 
 
     return red_constr
@@ -171,6 +186,9 @@ def compute_set_of_constraints_for_variable(x: Variable, prev_x: Variable, norma
 
     # finally, get the union of constraints which do not contain y (unnormalised_constraints_without_prev U reduced_constr)
     unnormalised_constraints_without_prev.extend(reduced_constr)
+    unnormalised_constraints_without_prev = list(set(unnormalised_constraints_without_prev))
+    print(len(unnormalised_constraints_without_prev))
+    
 
     # if verbose:
     #     print('\nLEVEL', x.readable())
@@ -183,28 +201,23 @@ def compute_set_of_constraints_for_variable(x: Variable, prev_x: Variable, norma
 
 def compute_sets_of_constraints(ordering: List[Variable], constraints: List[Constraint], verbose) -> {Variable: List[Constraint]}:
     print(f' *** ALL CONSTRAINTS ***')
-    for constr in constraints:
-        print(constr.readable())
     # reverse the ordering:
     ordering = list(reversed(ordering))
     prev_x = ordering[0]
 
     # add all constraints for the highest ranking variable w.r.t. ordering
     ordered_normalised_constraints = {prev_x: normalise(prev_x, constraints)}
-    print(f' *** Normalised Constraints for {prev_x.readable()} ***')
-    for constr in constraints:
-        print(constr.readable())
 
     for x in ordering[1:]:
         normalised_constraints_at_previous_level = ordered_normalised_constraints[prev_x]
         set_of_constraints = compute_set_of_constraints_for_variable(x, prev_x, normalised_constraints_at_previous_level, verbose)
-        print(f' *** Unnormalised Constraints for {x.readable()} ***')
-        for constr in set_of_constraints:
-            print(constr.readable())
+        # print(f' *** Unnormalised Constraints for {x.readable()} ***')
+        # for constr in set_of_constraints:
+        #     print(constr.readable())
         ordered_normalised_constraints[x] = normalise(x, set_of_constraints)
-        print(f'\n *** Normalised Constraints for {x.readable()} ***')
-        for constr in ordered_normalised_constraints[x]:
-            print(constr.readable())
+        # print(f'\n *** Normalised Constraints for {x.readable()} ***')
+        # for constr in ordered_normalised_constraints[x]:
+        #     print(constr.readable())
         prev_x = x
 
     # print('-'*80)

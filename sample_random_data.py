@@ -40,7 +40,7 @@ class Generator(nn.Module):
 
 def sample(ordering_list, sets_of_constr, n = 10000):
     input_length = 20
-    output_length = 36
+    output_length = 10
     
     generator = Generator(input_dim=input_length, output_dim=output_length)
     noise = torch.rand(size=(n, input_length)).float()
@@ -80,9 +80,9 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-seed = 2
-constraint_path = "/Users/mihajlobulesnij/Documents/system/RAI/Constraints_complexity/smt_formulas_random/n10_r1.7999999999999998_i3.txt"
-save_path = "data_generated/data_smt"
+seed = args.seed
+constraint_path = args.constraint_path
+save_path = args.save_path
 
 seed_everything(seed)
 

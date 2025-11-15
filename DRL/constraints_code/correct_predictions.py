@@ -100,7 +100,7 @@ def get_lower_bounds(x: Variable, x_constraints: List[Constraint], preds: torch.
     else:
         # if no lb is found, return -inf as lower bound (i.e., x>-inf)
         return -INFINITY
-    return lbs
+    return torch.unique(lbs, dim = 1)
 
 
 def get_upper_bounds(x: Variable, x_constraints: List[Constraint], preds: torch.Tensor, epsilon=1e-12) -> torch.Tensor:
@@ -121,7 +121,8 @@ def get_upper_bounds(x: Variable, x_constraints: List[Constraint], preds: torch.
     else:
         # if no ub is found, return +inf as upper bound (i.e., x<inf equiv. to -x > -inf)
         return INFINITY
-    return ubs
+    
+    return torch.unique(ubs, dim = 1)
 
 
 
@@ -172,7 +173,7 @@ def get_closest_left_bound(x, partially_corrected_preds_for_x, left_bounds, righ
     else:
         mask_samples_violating_req = []
         initial_x_val = partially_corrected_preds_for_x[:, x.id].clone()
-
+        
         for b in range(0, left_bounds.shape[-1]):
             preds_with_left_bounds_for_x = partially_corrected_preds_for_x.clone()
             preds_with_left_bounds_for_x[:, x.id] = left_bounds[:, b]
@@ -294,7 +295,6 @@ def get_closest_bound(x_vals_violating_req: torch.Tensor, left_bounds: torch.Ten
 
 def compute_DRL(x: Variable, partially_corrected_preds: torch.Tensor, constraints_at_level_x: List[Constraint]) -> torch.Tensor:
     # the partially_corrected_preds should contain the corrections made at the prev analysed vars!
-
     x_id = x.id
     initial_x_val = partially_corrected_preds[:, x_id].clone()
 
@@ -331,11 +331,9 @@ def correct_preds(preds: torch.Tensor, ordering: List[Variable], sets_of_constr:
         x_constr = get_constr_at_level_x(x, sets_of_constr)
         if len(x_constr) == 0:
             continue
-
         if not any_disjunctions_in_constraint_set(x_constr):
             # print(x.id, [e.readable() for e in x_constr], 'KKKK')  # .readable()],'@@@')
             pos_x_constr, neg_x_constr, pos_neg_x_constr = get_pos_neg_pn_x_constr(x, x_constr)
-
             constr_for_lbs = pos_x_constr + pos_neg_x_constr
             constr_for_ubs = neg_x_constr + pos_neg_x_constr
 
