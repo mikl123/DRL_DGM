@@ -118,15 +118,15 @@ class Inequality():
             return self, []
         return None
 
-    def check_satisfaction(self, preds: torch.Tensor) -> torch.Tensor:
+    def check_satisfaction(self, preds: torch.Tensor, tolerance = 0) -> torch.Tensor:
         eval_body_value = eval_atoms_list(self.body, preds)
         # note that preds might be batched
         # in general, if preds is of shape BxD, then the result will be of shape Bx1
         eval_body_value = eval_atoms_list(self.body, preds)
         if self.ineq_sign == '>':
-            results = eval_body_value > self.constant - TOLERANCE
+            results = eval_body_value > self.constant - tolerance
         elif self.ineq_sign == '>=':
-            results = eval_body_value >= self.constant - TOLERANCE
+            results = eval_body_value >= self.constant - tolerance
         else:
             raise NotImplementedError
         return results
@@ -287,12 +287,12 @@ class DisjunctInequality():
         selected_ineq = ineq_with_pos_x if sign_of_x == 'positive' else ineq_with_neg_x
         return selected_ineq.get_x_complement_body_atoms(x)
 
-    def check_satisfaction(self, preds: torch.Tensor) -> torch.Tensor:
+    def check_satisfaction(self, preds: torch.Tensor, tolerance = 0) -> torch.Tensor:
         # returns True if all preds (i.e. all samples) satisfy at least one of the clauses of this DI
 
         clause_sat = []
         for ineq in self.list_inequalities:
-            clause_sat.append(ineq.check_satisfaction(preds).unsqueeze(1))
+            clause_sat.append(ineq.check_satisfaction(preds, tolerance = tolerance).unsqueeze(1))
         # disj res: B x num_ineqs
         clause_sat = torch.cat(clause_sat, dim=1)
 
@@ -301,8 +301,8 @@ class DisjunctInequality():
         # print(preds[~batched_sat_results], 'Samples that do not satisfy any of the clauses in this DI')
         return batched_sat_results
 
-    def check_satisfaction_all(self, preds: torch.Tensor) -> bool:
-        return self.check_satisfaction(preds).all()
+    def check_satisfaction_all(self, preds: torch.Tensor, tolerance = 0) -> bool:
+        return self.check_satisfaction(preds, tolerance = tolerance).all()
 
 
 class Constraint():
@@ -323,8 +323,8 @@ class Constraint():
     def get_body_atoms(self):
         return self.disjunctive_inequality.get_body_atoms()
 
-    def check_satisfaction(self, preds):
-        return self.disjunctive_inequality.check_satisfaction_all(preds)
+    def check_satisfaction(self, preds, tolerance = 0):
+        return self.disjunctive_inequality.check_satisfaction_all(preds, tolerance = tolerance)
 
     def contains_variable_only_positively(self, x: Variable):
         return self.disjunctive_inequality.contains_variable_only_positively(x)

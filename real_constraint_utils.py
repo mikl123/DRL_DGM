@@ -35,8 +35,8 @@ def cnf_to_smt_over_reals(cnf, filename, random_v = False, margin = 0.1):
                 z3_clause.append(z3_vars[var] >= round(random_values[var] + margin/2, 3))
                 str_clause += f"y_{var-1} >= {round(random_values[var] + margin/2, 3)} or "
             else:
-                z3_clause.append(z3_vars[var] < round(random_values[var] - margin/2, 3))
-                str_clause += f"-y_{var-1} > -{round(random_values[var] - margin/2, 3)} or "
+                z3_clause.append(z3_vars[var] <= round(random_values[var] - margin/2, 3))
+                str_clause += f"-y_{var-1} >= -{round(random_values[var] - margin/2, 3)} or "
         str_constraint += str_clause[:-4]
         solver.add(Or(*z3_clause))
 

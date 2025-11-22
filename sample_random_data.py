@@ -32,7 +32,6 @@ class Generator(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, output_dim),
-            nn.Tanh()  # typically used for output in [-1, 1]
         )
 
     def forward(self, z):
@@ -43,11 +42,12 @@ def sample(ordering_list, sets_of_constr, n = 10000):
     output_length = 10
     
     generator = Generator(input_dim=input_length, output_dim=output_length)
-    noise = torch.rand(size=(n, input_length)).float()
+    noise = torch.rand(size=(n, input_length)).float() * 5 
     
     with torch.no_grad():
         generated_data = generator(noise)
-    unconstrained_data = generated_data.clone().detach()
+        generated_data = generated_data.clone().detach()
+    generated_data = torch.tanh(generated_data * 5)/2 + 0.5
     generated_data = correct_preds(generated_data, ordering_list, sets_of_constr)
     
     sampled_data = generated_data.detach()
@@ -116,4 +116,3 @@ base_path = constraint_path.split("/")[-1][:-4] + f"_{seed}"
 df_train.to_csv(f"{save_path}/{base_path}_train.csv", index=False)
 df_valid.to_csv(f"{save_path}/{base_path}_valid.csv", index=False)
 df_test.to_csv(f"{save_path}/{base_path}_test.csv", index=False)
-

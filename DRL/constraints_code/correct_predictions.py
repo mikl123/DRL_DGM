@@ -356,18 +356,17 @@ def correct_preds(preds: torch.Tensor, ordering: List[Variable], sets_of_constr:
 
     corrected_preds = torch.where(corrected_preds == torch.inf, INFINITY_NP, corrected_preds)
     corrected_preds = torch.where(corrected_preds == -torch.inf, -INFINITY_NP, corrected_preds)
-
     return corrected_preds
 
-def check_all_constraints_sat(corrected_preds, constraints, error_raise=True):
+def check_all_constraints_sat(corrected_preds, constraints, error_raise=True, tolerance = 0):
     all_sat_after_correction = True
-    for constr in constraints:
-        sat = constr.check_satisfaction(corrected_preds)
+    for index, constr in enumerate(constraints):
+        sat = constr.check_satisfaction(corrected_preds, tolerance = tolerance)
         if not sat:
             all_sat_after_correction = False
             if error_raise:
                 constr: Constraint
-                batched_sat_results = constr.disjunctive_inequality.check_satisfaction(corrected_preds)
+                batched_sat_results = constr.disjunctive_inequality.check_satisfaction(corrected_preds, tolerance = tolerance)
                 samples_violating_constr = corrected_preds[~batched_sat_results]
                 raise Exception('Not satisfied!', constr.readable(), samples_violating_constr[0][3], samples_violating_constr[0][10], samples_violating_constr[0][11])
     return all_sat_after_correction
