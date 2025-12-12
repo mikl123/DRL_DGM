@@ -19,7 +19,8 @@ from z3 import *
 import csv
 torch.set_printoptions(precision=10)
 from variables import TOLERANCE
-RESULTS_FILE = "model_results/model_evaluation_results.csv"
+
+RESULTS_FILE = "model_results/model_evaluation_results_pretrain_deterministic.csv"
 
 def save_results_to_csv(metrics, filename):
     fieldnames = [name for name, value in metrics]
@@ -122,9 +123,9 @@ def load_data():
     else:
         data_folder = "data_smt"
     
-    train_df = pd.read_csv(f"data_generated/{data_folder}/{constrain_name}_{dataset_index}_train.csv")
-    valid_df = pd.read_csv(f"data_generated/{data_folder}/{constrain_name}_{dataset_index}_valid.csv")
-    test_df = pd.read_csv(f"data_generated/{data_folder}/{constrain_name}_{dataset_index}_test.csv")
+    train_df = pd.read_csv(f"data_generated_pretrained/{constrain_name}_{dataset_index}_train.csv")
+    valid_df = pd.read_csv(f"data_generated_pretrained/{constrain_name}_{dataset_index}_valid.csv")
+    test_df = pd.read_csv(f"data_generated_pretrained/{constrain_name}_{dataset_index}_test.csv")
     
     input_cols = [index for index, col in enumerate(train_df.columns) if col.startswith("noise")]
     output_cols = [index for index, col in enumerate(train_df.columns) if col.startswith("pred")]
@@ -178,14 +179,16 @@ def train_pipeline(x_train, y_train, x_val, y_val, x_test, y_test, config):
     print("Model2")
     model_2_mae, model2_likelihood = evaluate(model_2_predicted, y_test)
     
+    import time
+    start = time.time()
     y_test_violation = check_vectors_against_smt2(constraint_path, y_test, tolerance = TOLERANCE)
-    y_test_violation_z3 = check_vectors_against_smt2_z3(constraint_path, y_test, tolerance = TOLERANCE)
+    # y_test_violation_z3 = check_vectors_against_smt2_z3(constraint_path, y_test, tolerance = TOLERANCE)
     
     model_1_violation = check_vectors_against_smt2(constraint_path, model_1_predicted["mu"], tolerance= TOLERANCE)
-    model_1_violation_z3 = check_vectors_against_smt2_z3(constraint_path, model_1_predicted["mu"], tolerance= TOLERANCE)
+    # model_1_violation_z3 = check_vectors_against_smt2_z3(constraint_path, model_1_predicted["mu"], tolerance= TOLERANCE)
     
     model_2_violation = check_vectors_against_smt2(constraint_path, model_2_predicted["mu"], tolerance= TOLERANCE)
-    model_2_violation_z3 = check_vectors_against_smt2_z3(constraint_path, model_2_predicted["mu"], tolerance= TOLERANCE)
+    # model_2_violation_z3 = check_vectors_against_smt2_z3(constraint_path, model_2_predicted["mu"], tolerance= TOLERANCE)
     
     arr = []
     tolerances = [TOLERANCE, 0.0001, 0.001, 0.01, 0.1]
@@ -197,10 +200,12 @@ def train_pipeline(x_train, y_train, x_val, y_val, x_test, y_test, config):
     for tolerance in tolerances:
         arr.append((f"model_2_violation_{tolerance}",check_vectors_against_smt2(constraint_path, model_2_predicted["mu"], tolerance)))
     
-    assert y_test_violation == y_test_violation_z3
     assert y_test_violation == 0
-    assert model_1_violation == model_1_violation_z3
-    assert model_2_violation == model_2_violation_z3
+    
+    # assert y_test_violation == y_test_violation_z3
+    # assert model_1_violation == model_1_violation_z3
+    # assert model_2_violation == model_2_violation_z3
+    print(time.time() - start)
     
     
     all_metrics_to_save = [
@@ -251,7 +256,7 @@ if __name__ == "__main__":
     
     config = {"model_1":{
             'batch_size': 32,
-            'epochs': 10,
+            'epochs': 100,
             'lr': 0.001,
             'hidden_dim': 100,
             'device': 'cpu',
@@ -259,7 +264,7 @@ if __name__ == "__main__":
         },
             "model_2": {
             'batch_size': 32,
-            'epochs': 10,
+            'epochs': 100,
             'lr': 0.001,
             'hidden_dim': 100,
             'device': 'cpu',

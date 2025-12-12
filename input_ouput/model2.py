@@ -18,17 +18,14 @@ class Model2(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(2 * output_dim - 1, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 1)  # outputs MU_j and log_SIGMA_j
+            nn.Linear(hidden_dim, 1)
         )
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         out = self.fc(x)
-        MU, log_SIGMA = torch.chunk(out, 2, dim=-1)
-        SIGMA = F.softplus(log_SIGMA) + 1e-6
-        return MU, SIGMA
-
-
-
+        out = self.sigmoid(out) 
+        return out
 def shift_and_pad(arr, pad_value=-1):
     """
     For each row in arr, generate shifted versions padded with pad_value.
@@ -51,7 +48,6 @@ def prepare_data(model1, x, y, config):
     output_dim = y.shape[1]
     
     x_predicted_m1 = inference_model1(model1, x, config = config) 
-    x_predicted_m1 = torch.cat([x_predicted_m1["mu"], torch.zeros_like(x_predicted_m1["sigma"])], dim=-1)
     x_predicted_m1 = x_predicted_m1.repeat_interleave(output_dim, dim = 0)
     
     x_prefix = shift_and_pad(y)
@@ -62,9 +58,7 @@ def prepare_data(model1, x, y, config):
 def prepare_data_test(model1, x, config):
     
     x_predicted_m1 = inference_model1(model1, x, config = config) 
-    output_dim = x_predicted_m1["mu"].shape[1]
-    
-    x_predicted_m1 = torch.cat([x_predicted_m1["mu"], torch.zeros_like(x_predicted_m1["sigma"])], dim=-1)
+    output_dim = x_predicted_m1.shape[1]
     
     x_prefix = torch.full((len(x_predicted_m1), output_dim - 1), -1)
     x = torch.cat([x_predicted_m1, x_prefix], dim=-1)
@@ -97,15 +91,15 @@ def train_model2(model1, x_train, y_train, x_val, y_val, config):
     best_val_loss = float('inf')
     best_model_state = None
     patience_counter = 0
-    criterion = nn.L1Loss()
+    criterion = nn.BCELoss()
     for epoch in range(epochs):
         model2.train()
         train_loss = 0.0
 
         for xb, yb in train_loader:
             xb, yb = xb.to(device), yb.to(device)
-            mu, _ = model2(xb)
-            loss = criterion(mu, yb)
+            out = model2(xb)
+            loss = criterion(out, yb)
 
             optimizer.zero_grad()
             loss.backward()
@@ -120,8 +114,8 @@ def train_model2(model1, x_train, y_train, x_val, y_val, config):
         with torch.no_grad():
             for xb, yb in val_loader:
                 xb, yb = xb.to(device), yb.to(device)
-                mu, _ = model2(xb)
-                loss = criterion(mu, yb)
+                out = model2(xb)
+                loss = criterion(out, yb)
                 val_loss += loss.item() * xb.size(0)
         val_loss /= len(val_loader.dataset)
 
@@ -154,19 +148,16 @@ def inference_model2(model1, model2, x, config):
     predicted_model2_sigma = []
     for n_class in range(out_dim):
         mu_buf = []
-        sigma_buf = []
         loader = DataLoader(TensorDataset(x), batch_size=batch_size, shuffle=False)
         for batch in loader:
             x_b = batch[0]
             with torch.no_grad():
-                mu, sigma = model2(x_b)
+                mu = model2(x_b)
                 mu_buf.append(mu)
-                sigma_buf.append(sigma)
         predicted_model2_mu.append(torch.flatten(torch.cat(mu_buf)))
-        predicted_model2_sigma.append(torch.flatten(torch.cat(sigma_buf)))
         if n_class == out_dim - 1:
             break
-        x[:, out_dim * 2 + n_class] = torch.flatten(torch.cat(mu_buf))
+        x[:, out_dim + n_class] = torch.flatten(torch.cat(mu_buf))
 
-    return {"mu" : torch.stack(predicted_model2_mu, dim=0).T, "sigma" : torch.stack(predicted_model2_sigma, dim=0).T}
+    return torch.stack(predicted_model2_mu, dim=0).T
     

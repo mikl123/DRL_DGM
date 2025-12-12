@@ -2,3 +2,7 @@ constraints_generated
 data_generated
 __pycache__
 data
+data_generated_pretrained
+constraint_input_output
+constr_input_output_2
+constrains_input_output_1

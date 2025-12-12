@@ -1,10 +1,13 @@
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import Dataset, DataLoader, TensorDataset
 from torch.distributions import Normal
 import torch.nn.functional as F
 import copy
+from pysat.formula import CNF, WCNF
+from pysat.examples.rc2 import RC2
+import numpy as np
 
 class Model1(nn.Module):
     """Takes n input features -> outputs mu_1..mu_m, sigma_1..sigma_m"""
@@ -13,17 +16,67 @@ class Model1(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 2 * output_dim)
+            nn.Linear(hidden_dim, output_dim)
         )
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, inputs):
         out = self.fc(inputs)
-        mu, log_sigma = torch.chunk(out, 2, dim=-1)
-        sigma = F.softplus(log_sigma) + 1e-6
-        return mu, sigma
+        out = self.sigmoid(out) 
+        return out
+
+def fix_vector_with_maxsat(vec, cnf_file):
+    hard_cnf = CNF(from_file=cnf_file)
+    formula = WCNF()
+
+    # Add hard clauses
+    for clause in hard_cnf.clauses:
+        formula.append(clause, weight=None)
+
+    n_vars = len(vec)
+    
+    # Soft clauses to encourage matching original vector bits
+    for i, val in enumerate(vec, start=1):
+        lit = i if val == 1 else -i
+        formula.append([lit], weight=1)
+
+    with RC2(formula) as rc2:
+        model = rc2.compute()
+
+    if model is None:
+        raise ValueError("No satisfying assignment found for vector")
+
+    fixed_vec = np.zeros(n_vars, dtype=np.int8)
+    for lit in model:
+        var = abs(lit)
+        val = lit > 0
+        fixed_vec[var - 1] = int(val)
+
+    return fixed_vec
+
+def calculate_constr_loss(predictions, constr_paths, epsilon = 0.000001):
+    fixed = []
+    for index, output in enumerate(predictions):
+        fixed.append(fix_vector_with_maxsat(output>0.5, constr_paths[index]))
+    return torch.mean(torch.abs(torch.log(epsilon + 1 - torch.abs(torch.tensor(fixed) - predictions))))
+    
 
 
-def train_model1(x_train, y_train, x_val, y_val, config):
+class MyDataset(Dataset):
+    def __init__(self, x, y, z):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.length = len(x)
+    
+    def __len__(self):
+        return self.length
+    
+    def __getitem__(self, idx):
+        return self.x[idx], self.y[idx], self.z[idx]
+
+
+def train_model1(x_train, y_train, x_val, y_val, config, train_constr = None, val_constr = None):
     """
     Train Model1 with validation, early stopping, and best model saving.
 
@@ -42,6 +95,7 @@ def train_model1(x_train, y_train, x_val, y_val, config):
                 'device': 'cuda' or 'cpu'
             }
     """
+    print("BCE")
     # --- Unpack config ---
     batch_size = config.get("batch_size")
     epochs = config.get("epochs")
@@ -54,8 +108,8 @@ def train_model1(x_train, y_train, x_val, y_val, config):
     output_dim = y_train.shape[1]
 
     # --- Datasets and Loaders ---
-    train_loader = DataLoader(TensorDataset(x_train, y_train), batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(TensorDataset(x_val, y_val), batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(MyDataset(x_train, y_train, train_constr), batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(MyDataset(x_val, y_val, val_constr), batch_size=batch_size, shuffle=False)
 
     # --- Model, Optimizer ---
     model1 = Model1(input_dim, output_dim, hidden_dim).to(device)
@@ -64,35 +118,43 @@ def train_model1(x_train, y_train, x_val, y_val, config):
     best_val_loss = float('inf')
     best_model_state = None
     patience_counter = 0
-    criterion = nn.L1Loss()
+    criterion = nn.BCELoss()
     # --- Training Loop ---
     for epoch in range(epochs):
         model1.train()
         train_loss = 0.0
+        constr_train_loss = 0.0
 
-        for xb, yb in train_loader:
+        for xb, yb, constr in train_loader:
             xb, yb = xb.to(device), yb.to(device)
-            mu, _ = model1(xb)
-            loss = criterion(mu, yb)
+            out = model1(xb)
+            constraint_loss = calculate_constr_loss(out, constr)
+            loss = criterion(out, yb) + config["constraints_weight"] * constraint_loss
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            train_loss += loss.item() * xb.size(0)
+            train_loss += loss.item() * xb.size(0) 
+            constr_train_loss += constraint_loss.item() * xb.size(0) 
 
         train_loss /= len(train_loader.dataset)
+        constr_train_loss /=len(train_loader.dataset)
 
         # --- Validation ---
         model1.eval()
         val_loss = 0.0
+        constr_val_loss = 0.0
         with torch.no_grad():
-            for xb, yb in val_loader:
+            for xb, yb, constr in val_loader:
                 xb, yb = xb.to(device), yb.to(device)
-                mu, _ = model1(xb)
-                loss = criterion(mu, yb)
+                out = model1(xb)
+                constraint_loss = calculate_constr_loss(out, constr)
+                loss = criterion(out, yb)
                 val_loss += loss.item() * xb.size(0)
+                constr_val_loss += constraint_loss.item() * xb.size(0)
         val_loss /= len(val_loader.dataset)
+        constr_val_loss /= len(val_loader.dataset)
 
-        print(f"Epoch [{epoch+1}/{epochs}] | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+        print(f"Epoch [{epoch+1}/{epochs}] | Train Loss: {train_loss:.4f} Constr {constr_train_loss} | Val Loss: {val_loss:.4f} Constr {constr_val_loss:.4f}")
 
         # --- Check Early Stopping ---
         if val_loss < best_val_loss - 1e-6:  # small tolerance for floating point stability
@@ -135,6 +197,6 @@ def inference_model1(model, x, config):
     model.to(config["device"])
 
     with torch.no_grad():
-        mu, sigma = model(x)
+        output = model(x)
 
-        return {"mu": mu, "sigma": sigma}
+        return output
