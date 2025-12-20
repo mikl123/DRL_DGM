@@ -54,11 +54,63 @@ def fix_vector_with_maxsat(vec, cnf_file):
 
     return fixed_vec
 
-def calculate_constr_loss(predictions, constr_paths, epsilon = 0.000001):
-    fixed = []
-    for index, output in enumerate(predictions):
-        fixed.append(fix_vector_with_maxsat(output>0.5, constr_paths[index]))
-    return torch.mean(torch.abs(torch.log(epsilon + 1 - torch.abs(torch.tensor(fixed) - predictions))))
+
+import numpy as np
+def soft_max(x, y, beta=10):
+    """Smooth approximation of max(x, y)"""
+    return (1/beta) * np.log(np.exp(beta * x) + np.exp(beta * y))
+
+def soft_min(x, y, beta=10):
+    """Smooth approximation of min(x, y)"""
+    return - (1/beta) * np.log(np.exp(-beta * x) + np.exp(-beta * y))
+
+def zadeh_and(x, y): return soft_min(x, y)
+    
+def zadeh_or(x, y): return soft_max(x, y)
+
+import torch
+from pysat.formula import CNF, WCNF
+
+def calculate_fuzzy_loss(predictions, constr_path):
+    hard_cnf = CNF(from_file=constr_path)
+    clause_satisfactions = [[] for _ in range(len(predictions))]
+    for clause in hard_cnf.clauses:
+        literals_probs = []
+        for lit in clause:
+            var_idx = abs(lit) - 1
+            prob = predictions[:,var_idx]
+            if lit < 0:
+                literals_probs.append(1 - prob)
+            else:
+                literals_probs.append(prob)
+        clause_sat = torch.clamp(torch.sum(torch.stack(literals_probs), axis = 0), max=1.0)
+        for i in range(len(clause_satisfactions)):
+            clause_satisfactions[i].append(clause_sat[i])
+    
+    clause_satisfactions = [torch.stack(row) for row in clause_satisfactions]
+    clause_satisfactions = torch.stack(clause_satisfactions)
+    total_satisfaction = torch.mean(torch.prod(clause_satisfactions, axis = 1))
+
+    loss = 1 - total_satisfaction
+    return loss
+
+
+def calculate_constr_loss(predictions, constr_paths, epsilon = 0.000001, fuzzy = True):
+    if fuzzy == True:
+        indices_dict = {}
+        for i, val in enumerate(constr_paths):
+            indices_dict.setdefault(val, []).append(i)
+        global_fuzzy = 0
+        for key, value in indices_dict.items():
+            loss = calculate_fuzzy_loss(predictions[value],key)
+            global_fuzzy += loss*len(value)
+        global_fuzzy/=len(predictions)
+        return global_fuzzy
+    else:
+        fixed = []
+        for index, output in enumerate(predictions):
+            fixed.append(fix_vector_with_maxsat(output>0.5, constr_paths[index]))
+        return torch.mean(torch.abs(torch.log(epsilon + 1 - torch.abs(torch.tensor(fixed) - predictions))))
     
 
 

@@ -19,7 +19,7 @@ torch.set_printoptions(precision=10)
 from pysat.formula import CNF
 from pysat.solvers import Solver
 
-RESULTS_FILE = "model_results/input_output2_constr.csv"
+RESULTS_FILE = "model_results/input_output2_constr_fuzz.csv"
 
 def save_results_to_csv(metrics, filename):
     fieldnames = [name for name, value in metrics]
