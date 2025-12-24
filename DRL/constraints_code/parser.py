@@ -114,15 +114,15 @@ def parse_constraints_file(file: str) -> (List[Variable], List[Constraint]):
 
 def main():
     ordering, constraints = parse_constraints_file('../data/constraints.txt')
-    for constr in constraints:
-        print(constr.readable())
+    # for constr in constraints:
+    #     print(constr.readable())
         # for elem in constr.inequality_list[0].body:
         #     print('id', elem.get_variable_id())
 
-    print('verbose constr')
-    for constr in constraints:
-        print(constr.verbose_readable())
-    print('ordering', ordering)
+    # print('verbose constr')
+    # for constr in constraints:
+    #     print(constr.verbose_readable())
+    # print('ordering', ordering)
 
 
 if __name__ == '__main__':

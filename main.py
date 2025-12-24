@@ -2,107 +2,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
-from model1 import train_model1, inference_model1
-from model2 import train_model2, inference_model2
-from DRL.constraints_code.parser import parse_constraints_file
-from DRL.constraints_code.correct_predictions import check_all_constraints_sat
-# --------------------------
-# Sequential Pipeline
-# --------------------------
+
 import random
 import numpy as np
 import torch
-from torch.distributions import Normal
-from sklearn.metrics import mean_absolute_error
-import pandas as pd
 from z3 import *
 import csv
 torch.set_printoptions(precision=10)
-from variables import TOLERANCE
 
-RESULTS_FILE = "model_results/model_evaluation_results_pretrain_deterministic.csv"
-
-def save_results_to_csv(metrics, filename):
-    fieldnames = [name for name, value in metrics]
-    data_row = [value for name, value in metrics]
-    file_exists = os.path.exists(filename)
-    
-    try:
-        with open(filename, 'a', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            if not file_exists or os.stat(filename).st_size == 0:
-                writer.writerow(fieldnames)
-                print(f"Created new CSV file: '{filename}' and wrote header.")
-            writer.writerow(data_row)
-            print(f"Appended new results to '{filename}'.")
-
-    except Exception as e:
-        print(f"An error occurred while writing to CSV: {e}")
-
-
-def extract_inequalities(expr):
-    if expr.num_args() == 0:
-        return []
-
-    op = expr.decl().kind()
-
-    if op in [Z3_OP_LT, Z3_OP_LE, Z3_OP_GT, Z3_OP_GE]:
-        return [expr]
-
-    # Logical groups → recurse
-    if op in [Z3_OP_OR, Z3_OP_AND]:
-        inequalities = []
-        for child in expr.children():
-            inequalities.extend(extract_inequalities(child))
-        return inequalities
-
-    return []
-
-def check_vectors_against_smt2_z3(smt2_path, vectors, tolerance = 0):
-    assertions = parse_smt2_file(smt2_path[:-4] + ".smt2")
-    var_names = [f"x{i+1}" for i in range(len(vectors[0]))]
-    z3_vars = {name: Real(name) for name in var_names}
-    results = []
-    for vec in vectors:
-        if len(vec) != len(var_names):
-            raise ValueError(f"Vector length {len(vec)} does not match number of vars {len(var_names)}")
-        subs_dict = {z3_vars[name]:RealVal(float(val)) for name, val in zip(var_names, vec)}
-        all_true = True
-        for index, a in enumerate(assertions):
-            subs_buf = []
-            inequalities = [str(i) for i in extract_inequalities(a)]
-            for i in inequalities:
-                var_n, op, _ = i.split(" ")
-                subs_buf.append((z3_vars[var_n], subs_dict[z3_vars[var_n]] + tolerance if op == ">=" else subs_dict[z3_vars[var_n]] - tolerance))
-            simplified = simplify(substitute(a, *subs_buf))
-            if simplified == False:
-                all_true = False
-                break
-
-        results.append(all_true)
-    return 1 - (sum(results)/len(results))
-
-
-def check_vectors_against_smt2(smt2_path, vectors, tolerance = 0):
-    """
-    Check a list of vectors against SMT2 constraints and return
-    the fraction of vectors that violate at least one constraint.
-
-    Args:
-        smt2_path (str): path to the SMT2 file.
-        vectors (list[dict]): list of dictionaries mapping variable names to values.
-
-    Returns:
-        float: fraction of violating vectors (0.0 = all satisfy, 1.0 = all violate)
-    """
-    
-    _, constraints = parse_constraints_file(constraint_path)
-    sat_buf = 0
-    for i in range(len(vectors)):
-        sat = check_all_constraints_sat(vectors[i:i+1], constraints=constraints, error_raise=False, tolerance = tolerance)
-        sat_buf += sat
-    return 1 - (sat_buf/len(vectors))
-    
+from model1 import train_model1, inference_model1
+from model2 import train_model2, inference_model2
+from utils_model import evaluate_prep, check_vectors_against_sat, load_data, evaluate_real, check_vectors_against_smt2, calculate_constr_loss_real
+from utils_generator import save_results_to_csv
 
 def seed_everything(seed: int):
     """Seed Python, NumPy, and PyTorch for reproducibility."""
@@ -115,112 +26,48 @@ def seed_everything(seed: int):
     torch.backends.cudnn.benchmark = False
     print(f"All random seeds set to {seed}")
 
-def load_data():
-    constrain_name = constraint_path.split("/")[-1][:-4]
-    data_folder = constraint_path.split("/")[-2]
-    if "random" in data_folder:
-        data_folder = "data_smt_random"
-    else:
-        data_folder = "data_smt"
-    
-    train_df = pd.read_csv(f"data_generated_pretrained/{constrain_name}_{dataset_index}_train.csv")
-    valid_df = pd.read_csv(f"data_generated_pretrained/{constrain_name}_{dataset_index}_valid.csv")
-    test_df = pd.read_csv(f"data_generated_pretrained/{constrain_name}_{dataset_index}_test.csv")
-    
-    input_cols = [index for index, col in enumerate(train_df.columns) if col.startswith("noise")]
-    output_cols = [index for index, col in enumerate(train_df.columns) if col.startswith("pred")]
-
-    # Train split
-    X_train = train_df.iloc[:,input_cols].values
-    y_train = train_df.iloc[:,output_cols].values
-
-    # Validation split
-    X_valid = valid_df.iloc[:,input_cols].values
-    y_valid = valid_df.iloc[:,output_cols].values
-
-    # Test split
-    X_test = test_df.iloc[:,input_cols].values
-    y_test = test_df.iloc[:,output_cols].values
-
-    return (
-    torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32), 
-    torch.tensor(X_valid, dtype=torch.float32), torch.tensor(y_valid, dtype=torch.float32),
-    torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test, dtype=torch.float32))
-
-
-def evaluate(prediction, y_test):
-    mu = prediction["mu"]
-    sigma = prediction["sigma"]
-    
-    y_true = y_test.detach().cpu().numpy()
-    mu_np = mu.detach().cpu().numpy()
-
-    mae = mean_absolute_error(y_true, mu_np)
-    
-    dist = Normal(mu, sigma)
-    likelihood = dist.log_prob(y_test).mean().item()
-
-    print(f"MAE: {mae:.4f}")
-    print(f"Average log-likelihood: {likelihood:.4f}")
-
-    return mae, likelihood
-
-
-def train_pipeline(x_train, y_train, x_val, y_val, x_test, y_test, config):
-    model1 = train_model1(x_train, y_train, x_val, y_val, config=config["model_1"])
+def train_pipeline(x_train, y_train, train_constr, x_val, y_val, val_constr, x_test, y_test, test_constr, config):
+    model1 = train_model1(x_train, y_train, x_val, y_val, train_constr = train_constr, val_constr = val_constr, config=config["model_1"], is_real = is_real)
     model_1_predicted = inference_model1(model1, x_test, config=config["model_1"])
     
-    model2 = train_model2(model1, x_train, y_train, x_val, y_val, config=config)
+    model2 = train_model2(model1, x_train, y_train, x_val, y_val, config=config, is_real = is_real)
     model_2_predicted = inference_model2(model1, model2, x_test, config=config)
     
-    print("Model1")
-    model_1_mae, model1_likelihood = evaluate(model_1_predicted, y_test)
-    
-    print("Model2")
-    model_2_mae, model2_likelihood = evaluate(model_2_predicted, y_test)
-    
-    import time
-    start = time.time()
-    y_test_violation = check_vectors_against_smt2(constraint_path, y_test, tolerance = TOLERANCE)
-    # y_test_violation_z3 = check_vectors_against_smt2_z3(constraint_path, y_test, tolerance = TOLERANCE)
-    
-    model_1_violation = check_vectors_against_smt2(constraint_path, model_1_predicted["mu"], tolerance= TOLERANCE)
-    # model_1_violation_z3 = check_vectors_against_smt2_z3(constraint_path, model_1_predicted["mu"], tolerance= TOLERANCE)
-    
-    model_2_violation = check_vectors_against_smt2(constraint_path, model_2_predicted["mu"], tolerance= TOLERANCE)
-    # model_2_violation_z3 = check_vectors_against_smt2_z3(constraint_path, model_2_predicted["mu"], tolerance= TOLERANCE)
-    
-    arr = []
-    tolerances = [TOLERANCE, 0.0001, 0.001, 0.01, 0.1]
-    
-    for tolerance in tolerances:
-        arr.append((f"y_test_violation_{tolerance}",check_vectors_against_smt2(constraint_path, y_test, tolerance)))
-    for tolerance in tolerances:
-        arr.append((f"model_1_violation_{tolerance}",check_vectors_against_smt2(constraint_path, model_1_predicted["mu"], tolerance)))
-    for tolerance in tolerances:
-        arr.append((f"model_2_violation_{tolerance}",check_vectors_against_smt2(constraint_path, model_2_predicted["mu"], tolerance)))
-    
-    assert y_test_violation == 0
-    
-    # assert y_test_violation == y_test_violation_z3
-    # assert model_1_violation == model_1_violation_z3
-    # assert model_2_violation == model_2_violation_z3
-    print(time.time() - start)
-    
-    
-    all_metrics_to_save = [
-        ('model_1_mae', model_1_mae),
-        ('model_1_likelihood', model1_likelihood),
-        ('model_2_mae', model_2_mae),
-        ('model_2_likelihood', model2_likelihood),
-        ('y_test_violation', y_test_violation),
-        ('model_1_violation', model_1_violation),
-        ('model_2_violation', model_2_violation),
-        ('constraint_path', constraint_path),
-        ('dataset_index',dataset_index),
-        *arr
-    ]
-    save_results_to_csv(all_metrics_to_save, filename= RESULTS_FILE)
+    all_metrics_to_save = {}
+    if is_real == False:
+        model_1_predicted = torch.sigmoid(model_1_predicted)
+        model_2_predicted = torch.sigmoid(model_2_predicted)
+        (all_metrics_to_save["model1_loss"],
+        all_metrics_to_save["model1_hamming"],
+        all_metrics_to_save["model1_accuracy"]) = evaluate_prep(model_1_predicted, y_test)
+
+        (all_metrics_to_save["model2_loss"],
+         all_metrics_to_save["model2_hamming"],
+         all_metrics_to_save["model2_accuracy"]) = evaluate_prep(model_2_predicted, y_test)
+        
+        all_metrics_to_save["y_test_violation"] = check_vectors_against_sat(y_test, test_constr)
+        assert all_metrics_to_save["y_test_violation"] == 0, "True target should not violate constraints"
+        all_metrics_to_save["model_1_violation"] = check_vectors_against_sat(model_1_predicted>0.5, test_constr)
+        all_metrics_to_save["model_2_violation"] = check_vectors_against_sat(model_2_predicted>0.5, test_constr)
+    else:
+        all_metrics_to_save["model1_mae"] = evaluate_real(model_1_predicted, y_test)
+        all_metrics_to_save["model2_mae"] = evaluate_real(model_2_predicted, y_test)
+        
+        all_metrics_to_save["y_test_violation"] = check_vectors_against_smt2(y_test, test_constr, tolerance=0.00001)
+        assert all_metrics_to_save["y_test_violation"] == 0, "True target should not violate constraints"
+        for i in [0.0001, 0.001, 0.01]:
+            all_metrics_to_save[f"model_1_violation_{i}"] = check_vectors_against_smt2(model_1_predicted, test_constr, tolerance=i)
+            all_metrics_to_save[f"model_2_violation_{i}"] = check_vectors_against_smt2(model_2_predicted, test_constr, tolerance=i)
+        
+        all_metrics_to_save["model_1_violation_loss"] = calculate_constr_loss_real(model_1_predicted, test_constr).detach().numpy()
+        all_metrics_to_save["model_2_violation_loss"] = calculate_constr_loss_real(model_2_predicted, test_constr).detach().numpy()
+        
+        
+    all_metrics_to_save["experiment_path"] = experiment_path.split("/")[-1]
+    all_metrics_to_save["seed"] = seed
+    all_metrics_to_save["constraints_weight"] = config["model_1"]["constraints_weight"]
+
+    save_results_to_csv(all_metrics_to_save, filename = RESULTS_FILE)
 
 import argparse
 
@@ -229,40 +76,58 @@ parser = argparse.ArgumentParser(description="Your script description here")
 parser.add_argument(
     "--seed",
     type=int,
-    default=None,
+    default=1,
     help="Random seed for reproducibility"
 )
 
 parser.add_argument(
-    "--constraint_path",
+    "--experiment_path",
     type=str,
-    default=None,
-    help="Path to the constraint file"
+    default="dataset_new/real/2_1.5_2_1",
+    help="Path to the experiment folder"
 )
 
 parser.add_argument(
-    "--dataset_index",
-    type=str,
-    default=None,
-    help="dataset index"
+    "--constraints_weight",
+    type=float,
+    default=0,
+    help="Constraint weight"
 )
+
+parser.add_argument(
+    "--results_file",
+    type=str,
+    default="model_results/input_output2_real.csv",
+    help="Constraint weight"
+)
+parser.add_argument(
+    "--is_real", 
+    default=True,
+    action="store_true"
+)
+
+
 args = parser.parse_args()
 
-seed = args.seed
-constraint_path = args.constraint_path
-dataset_index = args.dataset_index
+seed = int(args.seed)
+experiment_path = str(args.experiment_path)
+constraints_weight = float(args.constraints_weight)
+RESULTS_FILE = str(args.results_file)
+is_real = bool(args.is_real)
 
 if __name__ == "__main__":
     
-    config = {"model_1":{
+    config = {
+        "model_1":{
             'batch_size': 32,
             'epochs': 100,
             'lr': 0.001,
             'hidden_dim': 100,
             'device': 'cpu',
-            "patience":20
+            "patience":20,
+            "constraints_weight": constraints_weight
         },
-            "model_2": {
+        "model_2": {
             'batch_size': 32,
             'epochs': 100,
             'lr': 0.001,
@@ -273,12 +138,9 @@ if __name__ == "__main__":
     
     seed_everything(seed)
 
-    n_inputs = 20
-    m_outputs = 10
-    
-    X_train, y_train, X_valid, y_valid, X_test, y_test = load_data()
+    X_train, y_train, train_constr, X_valid, y_valid, val_constr, X_test, y_test, test_constr = load_data(experiment_path)
 
-    train_pipeline(x_train = X_train, y_train = y_train,
-                   x_val = X_valid, y_val = y_valid,
-                   x_test = X_test, y_test = y_test, config = config)
+    train_pipeline(x_train = X_train, y_train = y_train, train_constr = train_constr,
+                   x_val = X_valid, y_val = y_valid, val_constr = val_constr,
+                   x_test = X_test, y_test = y_test, test_constr = test_constr, config = config)
 

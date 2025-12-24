@@ -11,7 +11,7 @@ from DRL.constraints_code.feature_orderings import set_random_ordering
 import numpy as np
 
 INFINITY = torch.inf
-INFINITY_NP = torch.tensor(np.int32(1e16))
+INFINITY_NP = torch.tensor(np.int32(1e8))
 # INFINITY_NP = torch.tensor(np.int64(1e16))
 
 
@@ -394,31 +394,31 @@ def main():
     # set ordering to random
     ordering = set_random_ordering(ordering)
 
-    print('verbose constr')
-    for constr in constraints:
-        print(constr.verbose_readable())
+    # print('verbose constr')
+    # for constr in constraints:
+    #     print(constr.verbose_readable())
 
-    print('compute sets of constraints')
+    # print('compute sets of constraints')
     sets_of_constr = compute_sets_of_constraints(ordering, constraints, verbose=True)
 
     # preds = example_predictions()
     # preds = example_predictions_lcld()
     preds = example_predictions_custom()
-    print('\n\nPreds', preds)
+    # print('\n\nPreds', preds)
 
     preds.requires_grad = True
     t1 = time.time()
     corrected_preds = correct_preds(preds, ordering, sets_of_constr)
-    print('Original predictions', preds[0])
+    # print('Original predictions', preds[0])
 
-    print('Corrected predictions', corrected_preds[0], corrected_preds.requires_grad)
+    # print('Corrected predictions', corrected_preds[0], corrected_preds.requires_grad)
 
     check_all_constraints_are_sat(constraints, preds, corrected_preds)
 
-    print('Time to correct preds', time.time() - t1)
+    # print('Time to correct preds', time.time() - t1)
 
     compute_sat_stats(preds, constraints, mask_out_missing_values=True)
-    print(corrected_preds, 'corrected')
+    # print(corrected_preds, 'corrected')
 
 
 if __name__ == '__main__':

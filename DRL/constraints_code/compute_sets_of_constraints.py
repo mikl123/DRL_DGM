@@ -62,7 +62,7 @@ def create_constr_by_reduction(y: Variable, constraints_with_y: List[Constraint]
     pos_pos_constr = list(set(pos_pos_constr))
     # then obtain new constr by reduction on y from pairs of constr (p,q)
     # where p is from pos_constr and q is from neg_constr
-    for p in tqdm(pos_pos_constr):
+    for p in pos_pos_constr:
         p: Constraint
         ineq_from_p_with_y, list_ineqs_from_p_without_y = p.get_ineq_with_var_y_and_complement(y)
         for q in neg_constr:
@@ -187,7 +187,6 @@ def compute_set_of_constraints_for_variable(x: Variable, prev_x: Variable, norma
     # finally, get the union of constraints which do not contain y (unnormalised_constraints_without_prev U reduced_constr)
     unnormalised_constraints_without_prev.extend(reduced_constr)
     unnormalised_constraints_without_prev = list(set(unnormalised_constraints_without_prev))
-    print(len(unnormalised_constraints_without_prev))
     
 
     # if verbose:
@@ -200,7 +199,6 @@ def compute_set_of_constraints_for_variable(x: Variable, prev_x: Variable, norma
 
 
 def compute_sets_of_constraints(ordering: List[Variable], constraints: List[Constraint], verbose) -> {Variable: List[Constraint]}:
-    print(f' *** ALL CONSTRAINTS ***')
     # reverse the ordering:
     ordering = list(reversed(ordering))
     prev_x = ordering[0]
@@ -229,7 +227,6 @@ def compute_sets_of_constraints(ordering: List[Variable], constraints: List[Cons
     #     if len(ordered_normalised_constraints[x]) == 0:
     #         print('empty set')
     #     print('***\n')
-    print('-'*80)
 
     return ordered_normalised_constraints
 
@@ -242,9 +239,9 @@ def main():
     #     # for elem in constr.inequality_list[-1].body:
     #     #     print('id', elem.get_variable_id())
 
-    print('verbose constr')
-    for constr in constraints:
-        print(constr.verbose_readable())
+    # print('verbose constr')
+    # for constr in constraints:
+    #     print(constr.verbose_readable())
     # print(constraints)
 
     print('compute sets of constraints')
