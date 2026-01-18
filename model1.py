@@ -9,6 +9,8 @@ from pysat.formula import CNF, WCNF
 from pysat.examples.rc2 import RC2
 import numpy as np
 
+from DRL.constraints_code.parser import parse_constraints_file
+from DRL.constraints_code.compute_sets_of_constraints import compute_sets_of_constraints
 from utils_model import calculate_constr_loss_prep, calculate_constr_loss_real
 
 class Model1(nn.Module):
@@ -23,25 +25,38 @@ class Model1(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, inputs):
-        out = self.fc(inputs)
+        out = self.sigmoid(self.fc(inputs))
         return out
-
+    
+def prepare_constrs_real(constr_paths):
+    dict_buf = {}
+    for path in set(constr_paths):
+        ordering, constraints = parse_constraints_file(path)
+        sets_of_constr = compute_sets_of_constraints(ordering, constraints, verbose=True)
+        dict_buf[path] = (ordering, sets_of_constr)
+    return dict_buf
 
 class MyDataset(Dataset):
-    def __init__(self, x, y, z):
+    def __init__(self, x, y, z, sup):
         self.x = x
         self.y = y
         self.z = z
+        self.sup = sup
+        print(sum(self.sup == 0))
+        print(sum(self.sup == -1))
         self.length = len(x)
     
     def __len__(self):
         return self.length
     
     def __getitem__(self, idx):
-        return self.x[idx], self.y[idx], self.z[idx]
+        return (self.x[idx], 
+            self.y[idx],
+            self.z[idx], 
+            self.sup[idx] == 0)
 
 
-def train_model1(x_train, y_train, x_val, y_val, config, train_constr = None, val_constr = None, is_real = False):
+def train_model1(x_train, y_train, y_train_unsup, x_val, y_val, y_val_unsup, config, train_constr = None, val_constr = None, is_real = False):
     """
     Train Model1 with validation, early stopping, and best model saving.
 
@@ -73,8 +88,8 @@ def train_model1(x_train, y_train, x_val, y_val, config, train_constr = None, va
     output_dim = y_train.shape[1]
 
     # --- Datasets and Loaders ---
-    train_loader = DataLoader(MyDataset(x_train, y_train, train_constr), batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(MyDataset(x_val, y_val, val_constr), batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(MyDataset(x_train, y_train, train_constr, y_train_unsup), batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(MyDataset(x_val, y_val, val_constr, y_val_unsup), batch_size=batch_size, shuffle=False)
 
     # --- Model, Optimizer ---
     model1 = Model1(input_dim, output_dim, hidden_dim).to(device)
@@ -83,30 +98,45 @@ def train_model1(x_train, y_train, x_val, y_val, config, train_constr = None, va
     best_val_loss = float('inf')
     best_model_state = None
     patience_counter = 0
+    
+    
     if is_real == False:
         criterion = nn.BCEWithLogitsLoss()
     else:
         criterion = nn.L1Loss()
+    epoch_start_constr = 30
     # --- Training Loop ---
     for epoch in range(epochs):
         model1.train()
         train_loss = 0.0
         constr_train_loss = 0.0
-
-        for xb, yb, constr in train_loader:
+        epoch_start_constr -= 1
+        print(epoch_start_constr)
+        for xb, yb, constr, sup in train_loader:
             xb, yb = xb.to(device), yb.to(device)
             out = model1(xb)
-            # if is_real == False:
-            #     constraint_loss = calculate_constr_loss_prep(out, constr)
-            # else:
-            #     constraint_loss = calculate_constr_loss_real(out, constr)
-            constraint_loss = torch.tensor(0)
-            loss = criterion(out, yb) + config["constraints_weight"] * constraint_loss
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            train_loss += loss.item() * xb.size(0) 
-            constr_train_loss += constraint_loss.item() * xb.size(0) 
+            if is_real == False:
+                constraint_loss = calculate_constr_loss_prep(out[~sup], constr[~sup])
+            else:
+                if config["constraints_weight"] == 0 or epoch_start_constr > 0:
+                    constraint_loss = torch.tensor(0)
+                else:
+                    constraint_loss = calculate_constr_loss_real(out[~sup], xb[~sup], np.array(constr)[~sup])
+            # constraint_loss = torch.tensor(0)
+            
+            loss = criterion(out[sup], yb[sup])
+            if constraint_loss != 0:
+                coef = float(loss) / float(constraint_loss) 
+                loss_cumm = loss + config["constraints_weight"] * constraint_loss * coef
+            else:
+                loss_cumm = loss
+                
+            if not torch.isnan(loss_cumm):
+                optimizer.zero_grad()
+                loss_cumm.backward()
+                optimizer.step()
+                train_loss += loss.item() * sum(sup)
+                constr_train_loss += constraint_loss.item() * sum(~sup)
 
         train_loss /= len(train_loader.dataset)
         constr_train_loss /=len(train_loader.dataset)
@@ -114,23 +144,32 @@ def train_model1(x_train, y_train, x_val, y_val, config, train_constr = None, va
         # --- Validation ---
         model1.eval()
         val_loss = 0.0
+        unsup_val_loss = 0.0
         constr_val_loss = 0.0
         with torch.no_grad():
-            for xb, yb, constr in val_loader:
+            for xb, yb, constr, sup in val_loader:
                 xb, yb = xb.to(device), yb.to(device)
                 out = model1(xb)
-                # if is_real == False:
-                #     constraint_loss = calculate_constr_loss_prep(out, constr)
-                # else:
-                #     constraint_loss = calculate_constr_loss_real(out, constr)
-                constraint_loss = torch.tensor(0)
-                loss = criterion(out, yb)
-                val_loss += loss.item() * xb.size(0)
-                constr_val_loss += constraint_loss.item() * xb.size(0)
+                if is_real == False:
+                    constraint_loss = calculate_constr_loss_prep(out[~sup], constr[~sup])
+                else:
+                    constraint_loss = calculate_constr_loss_real(out[~sup], xb[~sup], np.array(constr)[~sup])
+                # constraint_loss = torch.tensor(0)
+                loss = criterion(out[sup], yb[sup])
+                loss_unsup = criterion(out[~sup], yb[~sup])
+                # loss_unsup = 0
+                
+                if not torch.isnan(loss):
+                    val_loss += loss.item() * sum(sup)
+                if not torch.isnan(loss_unsup):
+                    unsup_val_loss += loss_unsup.item() * sum(~sup)
+                if not torch.isnan(constraint_loss):
+                    constr_val_loss += constraint_loss.item() * sum(~sup)
         val_loss /= len(val_loader.dataset)
         constr_val_loss /= len(val_loader.dataset)
+        unsup_val_loss /= len(val_loader.dataset)
 
-        print(f"Epoch [{epoch+1}/{epochs}] | Train Loss: {train_loss:.4f} Constr {constr_train_loss} | Val Loss: {val_loss:.4f} Constr {constr_val_loss:.4f}")
+        print(f"Epoch [{epoch+1}/{epochs}] | Train Loss: {train_loss:.4f} Constr {constr_train_loss} | Val Loss: {val_loss:.4f} {unsup_val_loss:.4f} Constr {constr_val_loss:.4f}")
 
         # --- Check Early Stopping ---
         if val_loss < best_val_loss - 1e-6:  # small tolerance for floating point stability

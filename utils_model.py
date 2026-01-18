@@ -15,13 +15,14 @@ from pysat.formula import CNF
 from pysat.solvers import Solver
 
 from DRL.constraints_code.parser import parse_constraints_file
-from DRL.constraints_code.correct_predictions import check_all_constraints_sat
-from utils_generator import fix_vector_with_maxsat
-from DRL.constraints_code.correct_predictions import correct_preds
 from DRL.constraints_code.compute_sets_of_constraints import compute_sets_of_constraints
+from DRL.constraints_code.correct_predictions import check_all_constraints_sat
+from utils_generator import fix_vector_with_maxsat, fix_with_smt
+from DRL.constraints_code.correct_predictions import correct_preds
+
 
 def load_data(experiment_path):
-    c, r, b, _ = experiment_path.split("/")[-1].split("_")
+    c, r, b, m, _ = experiment_path.split("/")[-1].split("_")
     c = int(c)
     r = float(r)
     b = int(b)
@@ -45,14 +46,18 @@ def load_data(experiment_path):
     X_test = test_df.iloc[:,input_cols].values
     y_test = test_df.iloc[:,output_cols].values
 
-    train_constr = train_df.loc[:,"constraint"].values
-    test_constr = test_df.loc[:,"constraint"].values
-    valid_constr = valid_df.loc[:,"constraint"].values
+    train_constr = train_df.loc[:,"constraint"].str[:-5] + ".txt"
+    test_constr = test_df.loc[:,"constraint"].str[:-5] + ".txt"
+    valid_constr = valid_df.loc[:,"constraint"].str[:-5] + ".txt"
+    
+    train_region = train_df.loc[:,"region"].astype(int)
+    val_region = valid_df.loc[:,"region"].astype(int)
+    test_region = test_df.loc[:,"region"].astype(int)
     
     return (
-    torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32), train_constr,
-    torch.tensor(X_valid, dtype=torch.float32), torch.tensor(y_valid, dtype=torch.float32), valid_constr,
-    torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test, dtype=torch.float32), test_constr)
+    torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32), train_constr, train_region,
+    torch.tensor(X_valid, dtype=torch.float32), torch.tensor(y_valid, dtype=torch.float32), valid_constr, val_region,
+    torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test, dtype=torch.float32), test_constr, test_region)
 
 def is_valid_sat(vec, cnf_path):
     """
@@ -68,15 +73,22 @@ def is_valid_sat(vec, cnf_path):
             assumptions.append(lit)
         return solver.solve(assumptions=assumptions)
 
-def evaluate_prep(probs, y_test):
-    mean_sigmoid_loss = F.binary_cross_entropy(probs, y_test)
-    pred_binary = (probs >= 0.5).float()
-    hamming_distance = (pred_binary != y_test).float().mean()
-    
-    correct_vectors = (pred_binary == y_test).all(dim=1).float()
-    vector_accuracy = correct_vectors.mean()
-    
-    return mean_sigmoid_loss.item(), hamming_distance.item(), vector_accuracy
+def evaluate_prep(probs, y_test, test_region = None):
+    if test_region!=None:
+        results = []
+        for i in set(test_region):
+            mask = test_region == i
+            results.append((evaluate_prep(probs[mask], y_test[mask]), i))
+    else:
+        
+        mean_sigmoid_loss = F.binary_cross_entropy(probs, y_test)
+        pred_binary = (probs >= 0.5).float()
+        hamming_distance = (pred_binary != y_test).float().mean()
+        
+        correct_vectors = (pred_binary == y_test).all(dim=1).float()
+        vector_accuracy = correct_vectors.mean()
+        
+        return mean_sigmoid_loss.item(), hamming_distance.item(), vector_accuracy
 
 def check_vectors_against_sat(vectors, test_constr):
     counter = 0
@@ -109,11 +121,17 @@ def check_vectors_against_smt2(vectors, constraint_paths, tolerance = 0):
     return 1 - (sat_buf/len(vectors))
 
 
-def evaluate_real(prediction, y_test):
-    y_true = y_test.detach().cpu().numpy()
-
-    mae = mean_absolute_error(y_true, prediction)
-    return mae
+def evaluate_real(prediction, y_test, test_region = None):
+    if test_region is not None:
+        results = []
+        for i in set(test_region):
+            mask = test_region == i
+            results.append((evaluate_real(prediction[mask], y_test[mask]), i))
+        return results
+    else:
+        y_true = y_test.detach().cpu().numpy()
+        mae = mean_absolute_error(y_true, prediction)
+        return mae
 
 
 def calculate_fuzzy_loss(predictions, constr_path):
@@ -158,15 +176,23 @@ def calculate_constr_loss_prep(predictions, constr_paths, epsilon = 0.000001, fu
             loss_list.append(torch.sum(torch.abs(torch.log(epsilon + 1 - torch.abs(torch.tensor(fixed) - predictions[indices_dict[path]])))))
         return torch.sum(torch.stack(loss_list))/len(predictions)
     
-def calculate_constr_loss_real(predictions, constr_paths):
+def calculate_constr_loss_real(predictions, input, constr_paths, constr_dict = {}):
     indices_dict = {}
+    if len(predictions) == 0:
+        return torch.tensor(0)
     for i, val in enumerate(constr_paths):
         indices_dict.setdefault(val, []).append(i)
     loss_list = []
     for path in indices_dict:
-        ordering, constraints = parse_constraints_file(path)
-        sets_of_constr = compute_sets_of_constraints(ordering, constraints, verbose=True)
-        target = correct_preds(predictions[indices_dict[path]].detach().clone(), ordering, sets_of_constr)
-        loss_list.append(torch.sum(torch.abs(predictions[indices_dict[path]] - target)))
+        # if path in constr_dict:
+        #     ordering, sets_of_constr = constr_dict[path]
+        # else:
+        #     ordering, constraints = parse_constraints_file(path)
+        #     sets_of_constr = compute_sets_of_constraints(ordering, constraints, verbose=True)
+        target = fix_with_smt(predictions[indices_dict[path]].detach().numpy(),
+                              inputs=input[indices_dict[path]],
+                              paths = [path[:-4]+".smt2" for i in range(len(indices_dict[path]))])
+        loss_list.append(torch.sum(torch.abs(predictions[indices_dict[path]] - torch.tensor(target))))
+        
     return torch.sum(torch.stack(loss_list))/len(predictions)
     

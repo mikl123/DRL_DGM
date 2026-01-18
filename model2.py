@@ -99,16 +99,16 @@ def train_model2(model1, x_train, y_train, x_val, y_val, config, is_real):
     for epoch in range(epochs):
         model2.train()
         train_loss = 0.0
-
         for xb, yb in train_loader:
             xb, yb = xb.to(device), yb.to(device)
+            valid = yb != -1
             out = model2(xb)
-            loss = criterion(out, yb)
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            train_loss += loss.item() * xb.size(0)
+            loss = criterion(out[valid], yb[valid])
+            if not torch.isnan(loss):
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item() * sum(valid)
 
         train_loss /= len(train_loader.dataset)
 
@@ -117,13 +117,15 @@ def train_model2(model1, x_train, y_train, x_val, y_val, config, is_real):
         val_loss = 0.0
         with torch.no_grad():
             for xb, yb in val_loader:
+                valid = yb != -1
                 xb, yb = xb.to(device), yb.to(device)
                 out = model2(xb)
-                loss = criterion(out, yb)
-                val_loss += loss.item() * xb.size(0)
+                loss = criterion(out[valid], yb[valid])
+                if not torch.isnan(loss):
+                    val_loss += loss.item() * sum(valid)
         val_loss /= len(val_loader.dataset)
-
-        print(f"Epoch [{epoch+1}/{epochs}] | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+        print(train_loss)
+        print(f"Epoch [{epoch+1}/{epochs}] | Train Loss: {train_loss[0]:.4f} | Val Loss: {val_loss[0]:.4f}")
 
         # --- Check Early Stopping ---
         if val_loss < best_val_loss - 1e-6:  # small tolerance for floating point stability
@@ -139,7 +141,7 @@ def train_model2(model1, x_train, y_train, x_val, y_val, config, is_real):
     # --- Load Best Model Weights ---
     if best_model_state is not None:
         model2.load_state_dict(best_model_state)
-        print(f"Loaded best model (Val Loss: {best_val_loss:.4f})")
+        print(f"Loaded best model (Val Loss: {best_val_loss[0]:.4f})")
 
     return model2
 
